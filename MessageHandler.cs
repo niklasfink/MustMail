@@ -113,11 +113,16 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
             Message = new Message
             {
                 Subject = message.Subject,
-                ToRecipients = recipients,
-                CcRecipients = ccRecipients.Any() ? ccRecipients : null
+                ToRecipients = recipients
             }
 
         };
+
+        // Add CC recipients only if there are any
+        if (ccRecipients.Any())
+        {
+            requestBody.Message.CcRecipients = ccRecipients;
+        }
 
         // If message does contain a HTML body then use it
         if (message.HtmlBody != null)
