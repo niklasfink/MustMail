@@ -4,7 +4,7 @@ public class Configuration
 {
     public required SmtpConfiguration Smtp { get; init; }
     public required MicrosoftGraphConfiguration Graph { get; init; }
-    public required string SendFrom { get; init; }
+    public required List<string> AllowedSenders { get; init; }
     public string LogLevel { get; init; } = "Information";
 }
 public class SmtpConfiguration

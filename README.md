@@ -1,7 +1,44 @@
 <div align="center">
     <img src="https://img.shields.io/badge/.NET-5C2D91">
     <img src="https://img.shields.io/github/languages/top/bxdavies/MustMail">
-    <img src="https://img.shields.io/github/v/release/bxdavies/MustMail">
+   #### Docker compose
+Use Docker Compose## Usage
+
+Set up your application to send emails through MustMail by configuring the SMTP settings like this:
+
+```
+SMTP_HOST=localhost
+SMTP_PORT=9025
+SMTP_FROM_EMAIL=servers@example.com
+SMTP_SECURE=false
+```
+
+Names for these settings might vary depending on your app—check its documentation if you're not sure.
+
+If you're running MustMail in Docker and your app is in another container on the same network, use the container name (e.g. `mustmail`) instead of `localhost` for `SMTP_HOST`.
+
+**Important**: The sender address (`SMTP_FROM_EMAIL`) used by your application must be one of the addresses configured in the `AllowedSenders` list. MustMail will validate the sender address from each incoming email and reject any that aren't whitelisted.
+
+> [!TIP]
+> Test your setup with a simple SMTP test tool to make sure everything's working before going live.ement. Fill in your values and you're ready to go.
+```yml
+version: "3"
+
+services:
+  mustmail:
+    image: ghcr.io/bxdavies/mustmail
+    container_name: mustmail
+    environment:
+      - Smtp__Host="localhost"
+      - Smtp__Port=9025
+      - Graph__TenantId=""
+      - Graph__ClientId=""
+      - Graph__ClientSecret=""
+      - AllowedSenders__0="servers@example.com"
+      - AllowedSenders__1="notifications@example.com"
+      - LogLevel="Warning"
+    restart: unless-stopped
+```img.shields.io/github/v/release/bxdavies/MustMail">
     <img src="https://qlty.sh/gh/bxdavies/projects/MustMail/maintainability.png">
 </div>
 <br />
@@ -31,7 +68,7 @@ Application sends email → MustMail receives the email → MustMail sends the e
 ## Prerequisites
 - A Microsoft 365 Tenant.
 - A user with appropriate admin roles (Global Administrator, Privileged Role Administrator, Application Administrator, or Cloud Application Administrator) who can grant Application `Mail.Send` and `User.Read.All` API permissions.
-- The email address used as the SendFrom address must be a valid address within the tenant.
+- The email addresses used in AllowedSenders must be valid addresses within the tenant.
 
 ## Azure App Creation
 1. Go to the ['App registrations' section in Azure](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade).
@@ -58,7 +95,7 @@ Application sends email → MustMail receives the email → MustMail sends the e
 1. Download the binary release `MustMail-v0.0.0-win-x64.zip` (where 0.0.0 is the latest version) from [here](https://github.com/bxdavies/MustMail/releases/latest).
 2. Extract the zip file to `C:\MustMail`.
 3. Create an `appsettings.json` file in the same directory as the executable.
-4. Add the following to the file and fill in ClientId, TenantId, ClientSecret, and SendFrom between the empty double quotes:
+4. Add the following to the file and fill in ClientId, TenantId, ClientSecret, and AllowedSenders between the empty double quotes:
 ```json
 {
   "Graph": {
@@ -67,7 +104,10 @@ Application sends email → MustMail receives the email → MustMail sends the e
     "ClientSecret": ""
   },
   "LogLevel": "Information",
-  "SendFrom": "",
+  "AllowedSenders": [
+    "servers@example.com",
+    "notifications@example.com"
+  ],
   "Smtp": {
     "Host": "localhost",
     "Port": 9025
@@ -92,7 +132,7 @@ sudo tar -xzf MustMail-v0.0.0-linux-x64.tar.gz -C /opt/MustMail
 ```
 3. Change to the installation directory: `cd /opt/MustMail`.
 4. Create the appsettings.json file alongside the executable: `sudo nano appsettings.json`.
-5. Add the following to the file and fill in ClientId, TenantId, ClientSecret, and SendFrom between the empty double quotes:
+5. Add the following to the file and fill in ClientId, TenantId, ClientSecret, and AllowedSenders between the empty double quotes:
 ```json
 {
   "Graph": {
@@ -101,7 +141,10 @@ sudo tar -xzf MustMail-v0.0.0-linux-x64.tar.gz -C /opt/MustMail
     "ClientSecret": ""
   },
   "LogLevel": "Information",
-  "SendFrom": "",
+  "AllowedSenders": [
+    "servers@example.com",
+    "notifications@example.com"
+  ],
   "Smtp": {
     "Host": "localhost",
     "Port": 9025
@@ -145,7 +188,8 @@ docker run --name MustMail
 -e Graph__TenantId="" \
 -e Graph__ClientId="" \
 -e Graph__ClientSecret="" \
--e SendFrom="servers@example.com" \
+-e AllowedSenders__0="servers@example.com" \
+-e AllowedSenders__1="notifications@example.com" \
 -e LogLevel="Warning" \
 -d ghcr.io/bxdavies/mustmail
 ```
@@ -213,9 +257,12 @@ Smtp__Port=9025
 Graph__TenantId=""
 Graph__ClientId=""
 Graph__ClientSecret=""
-SendFrom="servers@example.com"
+AllowedSenders__0="servers@example.com"
+AllowedSenders__1="notifications@example.com"
 LogLevel="Warning"
 ```
+
+Note: For environment variables, arrays are configured using indexed notation (e.g., `AllowedSenders__0`, `AllowedSenders__1`, etc.).
 
 ### appsettings.json
 ```json
@@ -226,7 +273,10 @@ LogLevel="Warning"
     "ClientSecret": ""
   },
   "LogLevel": "Information",
-  "SendFrom": "",
+  "AllowedSenders": [
+    "servers@example.com",
+    "notifications@example.com"
+  ],
   "Smtp": {
     "Host": "localhost",
     "Port": 9025

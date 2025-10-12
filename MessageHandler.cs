@@ -11,7 +11,7 @@ using SmtpServer.Storage;
 
 namespace MustMail;
 
-public class MessageHandler(GraphServiceClient graphClient, ILogger logger, string sendFrom) : MessageStore
+public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List<string> allowedSenders) : MessageStore
 {
     public override async Task<SmtpResponse> SaveAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
     {
@@ -52,6 +52,24 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, stri
             Log.Warning("Unable to read message as Mime Message!");
             return SmtpResponse.SyntaxError;
         }
+
+        // Extract the sender address from the message
+        string? senderAddress = (message.From.FirstOrDefault() as MimeKit.MailboxAddress)?.Address;
+
+        if (string.IsNullOrEmpty(senderAddress))
+        {
+            logger.Warning("No sender address found in the message!");
+            return SmtpResponse.MailboxUnavailable;
+        }
+
+        // Validate sender is in the allowed list
+        if (!allowedSenders.Contains(senderAddress, StringComparer.OrdinalIgnoreCase))
+        {
+            logger.Warning("Sender address '{SenderAddress}' is not in the allowed senders list!", senderAddress);
+            return SmtpResponse.MailboxUnavailable;
+        }
+
+        logger.Debug("Using sender address: {SenderAddress}", senderAddress);
 
         // Create list of recipients
         List<Recipient> recipients = message.To
@@ -99,8 +117,8 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, stri
 
         try
         {
-            // Send email
-            await graphClient.Users[sendFrom].SendMail.PostAsync(requestBody, cancellationToken: cancellationToken);
+            // Send email using the validated sender address
+            await graphClient.Users[senderAddress].SendMail.PostAsync(requestBody, cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {
@@ -110,7 +128,7 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, stri
 
 
         // Log success message
-        logger.Information("The email with the subject `{MessageSubject}` was received and sent to `{MessageTo}` as `{From}`!", message.Subject, message.To, sendFrom);
+        logger.Information("The email with the subject `{MessageSubject}` was received and sent to `{MessageTo}` as `{From}`!", message.Subject, message.To, senderAddress);
 
         // Return email received successfully
         return SmtpResponse.Ok;

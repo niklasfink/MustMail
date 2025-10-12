@@ -11,7 +11,7 @@ using System.Text.Json;
 using ServiceProvider = SmtpServer.ComponentModel.ServiceProvider;
 
 // Version and copyright message
-Console.ForegroundColor = ConsoleColor.Cyan; 
+Console.ForegroundColor = ConsoleColor.Cyan;
 Console.WriteLine("Must Mail");
 Console.WriteLine(Assembly.GetEntryAssembly()!.GetName().Version?.ToString(3));
 Console.ForegroundColor = ConsoleColor.White;
@@ -32,7 +32,7 @@ bool parsed = Enum.TryParse<LogEventLevel>(logLevelString, ignoreCase: true, out
 
 if (!parsed)
 {
-    logLevel = LogEventLevel.Information; 
+    logLevel = LogEventLevel.Information;
 }
 
 // Creating logger
@@ -44,17 +44,17 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 
 // Prase config
-Configuration? config  = configuration.Get<Configuration>();
+Configuration? config = configuration.Get<Configuration>();
 
 // If configuration can not be parsed to config - exit
-if (config == null || config.Graph == null || config.Smtp == null || config.SendFrom == null)
+if (config == null || config.Graph == null || config.Smtp == null || config.AllowedSenders == null || config.AllowedSenders.Count == 0)
 {
     Log.Error("Could not load the configuration! Please see the README for how to set the configuration!");
     Environment.Exit(1);
 }
 
 // Log configuration
-Log.Information("Configuration: \n {Serialize}", JsonSerializer.Serialize(config, new JsonSerializerOptions{WriteIndented = true}));
+Log.Information("Configuration: \n {Serialize}", JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
 
 // Create SMTP Server options
 ISmtpServerOptions? options = new SmtpServerOptionsBuilder()
@@ -64,52 +64,60 @@ ISmtpServerOptions? options = new SmtpServerOptionsBuilder()
 
 // Create client secrete credential 
 ClientSecretCredential clientSecretCredential = new(
-    config.Graph.TenantId, 
-    config.Graph.ClientId, 
+    config.Graph.TenantId,
+    config.Graph.ClientId,
     config.Graph.ClientSecret,
     new ClientSecretCredentialOptions
     {
-        AuthorityHost =  AzureAuthorityHosts.AzurePublicCloud
+        AuthorityHost = AzureAuthorityHosts.AzurePublicCloud
     }
 );
 
 // Create graph client
 GraphServiceClient graphClient = new(clientSecretCredential, new[] { "https://graph.microsoft.com/.default" });
 
-// SendFrom checks
-try
+// Validate all allowed sender addresses
+Log.Information("Validating {Count} allowed sender address(es)...", config.AllowedSenders.Count);
+
+foreach (string senderAddress in config.AllowedSenders)
 {
-    User? user = await graphClient.Users[config.SendFrom].GetAsync();
-     
-    if (user == null)
+    try
     {
-        Log.Error("The specifed SendFrom address: '{From}' does not exist in the tenant!", config.SendFrom);
+        User? user = await graphClient.Users[senderAddress].GetAsync();
+
+        if (user == null)
+        {
+            Log.Error("The specified sender address: '{From}' does not exist in the tenant!", senderAddress);
+            Environment.Exit(1);
+        }
+
+        if (user.Mail == null && user.UserPrincipalName == null)
+        {
+            Log.Error("The user '{From}' has no email address configured and cannot send mail.", senderAddress);
+            Environment.Exit(1);
+        }
+
+        if (user.MailboxSettings == null)
+        {
+            Log.Warning("Mailbox settings for user '{From}' not found. Sending mail might not be available.", senderAddress);
+        }
+        else
+        {
+            Log.Information("Successfully validated sender address: '{From}'", senderAddress);
+        }
+    }
+    catch (Microsoft.Graph.Models.ODataErrors.ODataError error)
+    {
+        Log.Error("The specified sender address: '{From}' does not exist in the tenant!\nThe Microsoft Graph error message is: '{error}'", senderAddress, error.Message);
         Environment.Exit(1);
     }
-
-    if (user.Mail == null && user.UserPrincipalName == null)
-    {
-        Log.Error("The user '{From}' has no email address configured and cannot send mail.", config.SendFrom);
-        Environment.Exit(1);
-    }
-
-    if (user.MailboxSettings == null)
-    {
-        Log.Warning("Mailbox settings for user '{From}' not found. Sending mail might not be available.", config.SendFrom);
-    }
-
-}
-catch (Microsoft.Graph.Models.ODataErrors.ODataError error)
-{
-    Log.Error("The specifed SendFrom address: '{From}' does not exist in the tenant!\nThe Micrsoft Graph error message is: '{error}'", config.SendFrom, error.Message);
-    Environment.Exit(1);
 }
 
 // Create email service provider
 ServiceProvider emailServiceProvider = new();
 
 // Add the message handler to the service provider
-emailServiceProvider.Add(new MessageHandler(graphClient, Log.Logger.ForContext<MessageHandler>(), config.SendFrom));
+emailServiceProvider.Add(new MessageHandler(graphClient, Log.Logger.ForContext<MessageHandler>(), config.AllowedSenders));
 
 // Create the server
 SmtpServer.SmtpServer smtpServer = new(options, emailServiceProvider);
