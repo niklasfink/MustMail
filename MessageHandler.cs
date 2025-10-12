@@ -1,5 +1,6 @@
 ﻿using System.Buffers;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
 using Microsoft.Graph.Users.Item.SendMail;
@@ -85,13 +86,35 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
         string recipientList = string.Join(", ", recipients.Select(r => r.EmailAddress?.Address ?? "unknown"));
         logger.Debug("Recipients list: {Recipients}", recipientList);
 
+        // Extract CC recipients
+        List<Recipient> ccRecipients = message.Cc
+            .OfType<MimeKit.MailboxAddress>()
+            .Select(addr => new Recipient
+            {
+                EmailAddress = new EmailAddress
+                {
+                    Address = addr.Address,
+                    Name = addr.Name
+                }
+            }).ToList();
+
+        string? ccList = ccRecipients.Any() ? string.Join(", ", ccRecipients.Select(r => r.EmailAddress?.Address ?? "unknown")) : null;
+
+        // Extract attachment information
+        var attachmentNames = message.Attachments
+            .Select(a => a.ContentType.MimeType == "message/rfc822"
+                ? (a as MimeKit.MessagePart)?.Message?.Subject ?? "embedded-message"
+                : (a as MimeKit.MimePart)?.FileName ?? "unnamed-attachment")
+            .ToList();
+
         // Create message 
         SendMailPostRequestBody requestBody = new()
         {
             Message = new Message
             {
                 Subject = message.Subject,
-                ToRecipients = recipients
+                ToRecipients = recipients,
+                CcRecipients = ccRecipients.Any() ? ccRecipients : null
             }
 
         };
@@ -115,17 +138,31 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
             };
         }
 
+        // Log email transfer information
+        var emailInfo = new
+        {
+            Subject = message.Subject ?? "(no subject)",
+            From = senderAddress,
+            To = recipientList,
+            Cc = ccList,
+            AttachmentCount = attachmentNames.Count,
+            Attachments = attachmentNames.Any() ? string.Join(", ", attachmentNames) : null,
+            HasHtmlBody = message.HtmlBody != null,
+            HasTextBody = message.TextBody != null
+        };
+
+        logger.Information("Email transfer initiated: {EmailInfo:l}",
+            JsonSerializer.Serialize(emailInfo, new JsonSerializerOptions { WriteIndented = false }));
+
         try
         {
-            logger.Information("SMTP attempt: Sending '{Subject}' from {From} to {To}",
-                message.Subject ?? "(no subject)", senderAddress, recipientList);
 
             // Send email using the validated sender address
             await graphClient.Users[senderAddress].SendMail.PostAsync(requestBody, cancellationToken: cancellationToken);
 
             // Record success
             HealthCheckService.Instance.RecordSuccess();
-            logger.Information("SMTP success: '{Subject}' sent successfully", message.Subject ?? "(no subject)");
+            logger.Information("Email sent successfully");
 
             // Return email received successfully
             return SmtpResponse.Ok;
@@ -133,16 +170,14 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
         catch (Microsoft.Graph.Models.ODataErrors.ODataError odataEx)
         {
             string errorMsg = $"Microsoft Graph error: {odataEx.Error?.Message ?? odataEx.Message}";
-            logger.Error("SMTP failed: {ErrorMessage} | Subject: '{Subject}' | From: {From} | To: {To}",
-                errorMsg, message.Subject ?? "(no subject)", senderAddress, recipientList);
+            logger.Error("Email send failed: {ErrorMessage}", errorMsg);
             HealthCheckService.Instance.RecordFailure(errorMsg);
             return SmtpResponse.MailboxUnavailable;
         }
         catch (Exception ex)
         {
             string errorMsg = $"{ex.GetType().Name}: {ex.Message}";
-            logger.Error("SMTP failed: {ErrorMessage} | Subject: '{Subject}' | From: {From} | To: {To}",
-                errorMsg, message.Subject ?? "(no subject)", senderAddress, recipientList);
+            logger.Error("Email send failed: {ErrorMessage}", errorMsg);
             HealthCheckService.Instance.RecordFailure(errorMsg);
             return SmtpResponse.TransactionFailed;
         }

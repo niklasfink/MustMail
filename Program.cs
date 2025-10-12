@@ -53,8 +53,21 @@ if (config == null || config.Graph == null || config.Smtp == null || config.Allo
     Environment.Exit(1);
 }
 
-// Log configuration
-Log.Information("Configuration: \n {Config:l}", JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
+// Log configuration (with masked client secret)
+var configForLogging = new
+{
+    Smtp = config.Smtp,
+    Graph = new
+    {
+        config.Graph.TenantId,
+        config.Graph.ClientId,
+        ClientSecret = "***REDACTED***"
+    },
+    config.AllowedSenders,
+    config.LogLevel,
+    config.HealthCheckPort
+};
+Log.Information("Configuration: \n {Config:l}", JsonSerializer.Serialize(configForLogging, new JsonSerializerOptions { WriteIndented = true }));
 
 // Create SMTP Server options
 ISmtpServerOptions? options = new SmtpServerOptionsBuilder()
