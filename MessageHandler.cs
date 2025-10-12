@@ -100,12 +100,58 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
 
         string? ccList = ccRecipients.Any() ? string.Join(", ", ccRecipients.Select(r => r.EmailAddress?.Address ?? "unknown")) : null;
 
-        // Extract attachment information
-        var attachmentNames = message.Attachments
-            .Select(a => a.ContentType.MimeType == "message/rfc822"
-                ? (a as MimeKit.MessagePart)?.Message?.Subject ?? "embedded-message"
-                : (a as MimeKit.MimePart)?.FileName ?? "unnamed-attachment")
-            .ToList();
+        // Extract and process attachments
+        List<Microsoft.Graph.Models.Attachment> attachments = new();
+        List<string> attachmentNames = new();
+
+        foreach (var attachment in message.Attachments)
+        {
+            if (attachment is MimeKit.MimePart mimePart)
+            {
+                // Regular file attachment
+                using var memoryStream = new MemoryStream();
+                mimePart.Content.DecodeTo(memoryStream);
+                byte[] attachmentBytes = memoryStream.ToArray();
+
+                string fileName = mimePart.FileName ?? "unnamed-attachment";
+                attachmentNames.Add(fileName);
+
+                attachments.Add(new FileAttachment
+                {
+                    OdataType = "#microsoft.graph.fileAttachment",
+                    Name = fileName,
+                    ContentType = mimePart.ContentType.MimeType,
+                    ContentBytes = attachmentBytes
+                });
+
+                logger.Debug("Processing attachment: {FileName}, Size: {Size} bytes, Type: {ContentType}",
+                    fileName, attachmentBytes.Length, mimePart.ContentType.MimeType);
+            }
+            else if (attachment is MimeKit.MessagePart messagePart)
+            {
+                // Embedded email message
+                if (messagePart.Message != null)
+                {
+                    string embeddedName = messagePart.Message.Subject ?? "embedded-message";
+                    attachmentNames.Add(embeddedName);
+
+                    using var memoryStream = new MemoryStream();
+                    messagePart.Message.WriteTo(memoryStream);
+                    byte[] messageBytes = memoryStream.ToArray();
+
+                    attachments.Add(new FileAttachment
+                    {
+                        OdataType = "#microsoft.graph.fileAttachment",
+                        Name = embeddedName + ".eml",
+                        ContentType = "message/rfc822",
+                        ContentBytes = messageBytes
+                    });
+
+                    logger.Debug("Processing embedded message: {Name}, Size: {Size} bytes",
+                        embeddedName, messageBytes.Length);
+                }
+            }
+        }
 
         // Create message 
         SendMailPostRequestBody requestBody = new()
@@ -122,6 +168,12 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
         if (ccRecipients.Any())
         {
             requestBody.Message.CcRecipients = ccRecipients;
+        }
+
+        // Add attachments only if there are any
+        if (attachments.Any())
+        {
+            requestBody.Message.Attachments = attachments;
         }
 
         // If message does contain a HTML body then use it
