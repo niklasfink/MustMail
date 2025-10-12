@@ -15,10 +15,6 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
 {
     public override async Task<SmtpResponse> SaveAsync(ISessionContext context, IMessageTransaction transaction, ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
     {
-
-        // Debug log for when this function is called
-        Log.Debug("An email has been recived!");
-
         // Create memory stream
         await using MemoryStream stream = new();
 
@@ -34,8 +30,8 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
         // Get position 0 
         position = buffer.GetPosition(0);
 
-        // Dbeug log for the raw message
-        logger.Debug($"Raw message:\n{Encoding.UTF8.GetString(buffer.ToArray())}");
+        // Debug log for the raw message
+        logger.Debug("Raw message:\n{RawMessage}", Encoding.UTF8.GetString(buffer.ToArray()));
 
         // Set stream position back to 0
         stream.Position = 0;
@@ -44,12 +40,13 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
         MimeMessage? message = await MimeMessage.LoadAsync(stream, cancellationToken);
 
         // Debug log for the Mime Message
-        logger.Debug($"Mime Message:\n {message.ToString()}");
+        logger.Debug("Mime Message:\n {MimeMessage}", message?.ToString());
 
         // If message is null then return an error
         if (message == null)
         {
-            Log.Warning("Unable to read message as Mime Message!");
+            logger.Warning("SMTP attempt failed: Unable to parse message as MIME");
+            HealthCheckService.Instance.RecordFailure("Unable to parse message as MIME");
             return SmtpResponse.SyntaxError;
         }
 
@@ -58,14 +55,16 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
 
         if (string.IsNullOrEmpty(senderAddress))
         {
-            logger.Warning("No sender address found in the message!");
+            logger.Warning("SMTP attempt failed: No sender address found");
+            HealthCheckService.Instance.RecordFailure("No sender address found");
             return SmtpResponse.MailboxUnavailable;
         }
 
         // Validate sender is in the allowed list
         if (!allowedSenders.Contains(senderAddress, StringComparer.OrdinalIgnoreCase))
         {
-            logger.Warning("Sender address '{SenderAddress}' is not in the allowed senders list!", senderAddress);
+            logger.Warning("SMTP attempt failed: Sender '{SenderAddress}' not in allowed list", senderAddress);
+            HealthCheckService.Instance.RecordFailure($"Unauthorized sender: {senderAddress}");
             return SmtpResponse.MailboxUnavailable;
         }
 
@@ -83,7 +82,8 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
             }
         }).ToList();
 
-        logger.Debug("Recipients list: {Recipients}", string.Join(", ", recipients.Select(r => r.EmailAddress.Address)));
+        string recipientList = string.Join(", ", recipients.Select(r => r.EmailAddress?.Address ?? "unknown"));
+        logger.Debug("Recipients list: {Recipients}", recipientList);
 
         // Create message 
         SendMailPostRequestBody requestBody = new()
@@ -117,21 +117,34 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
 
         try
         {
+            logger.Information("SMTP attempt: Sending '{Subject}' from {From} to {To}",
+                message.Subject ?? "(no subject)", senderAddress, recipientList);
+
             // Send email using the validated sender address
             await graphClient.Users[senderAddress].SendMail.PostAsync(requestBody, cancellationToken: cancellationToken);
+
+            // Record success
+            HealthCheckService.Instance.RecordSuccess();
+            logger.Information("SMTP success: '{Subject}' sent successfully", message.Subject ?? "(no subject)");
+
+            // Return email received successfully
+            return SmtpResponse.Ok;
+        }
+        catch (Microsoft.Graph.Models.ODataErrors.ODataError odataEx)
+        {
+            string errorMsg = $"Microsoft Graph error: {odataEx.Error?.Message ?? odataEx.Message}";
+            logger.Error("SMTP failed: {ErrorMessage} | Subject: '{Subject}' | From: {From} | To: {To}",
+                errorMsg, message.Subject ?? "(no subject)", senderAddress, recipientList);
+            HealthCheckService.Instance.RecordFailure(errorMsg);
+            return SmtpResponse.MailboxUnavailable;
         }
         catch (Exception ex)
         {
-            logger.Warning($"Unknown Error:\n {ex.Message}");
-            return SmtpResponse.SyntaxError;
+            string errorMsg = $"{ex.GetType().Name}: {ex.Message}";
+            logger.Error("SMTP failed: {ErrorMessage} | Subject: '{Subject}' | From: {From} | To: {To}",
+                errorMsg, message.Subject ?? "(no subject)", senderAddress, recipientList);
+            HealthCheckService.Instance.RecordFailure(errorMsg);
+            return SmtpResponse.TransactionFailed;
         }
-
-
-        // Log success message
-        logger.Information("The email with the subject `{MessageSubject}` was received and sent to `{MessageTo}` as `{From}`!", message.Subject, message.To, senderAddress);
-
-        // Return email received successfully
-        return SmtpResponse.Ok;
-
     }
 }

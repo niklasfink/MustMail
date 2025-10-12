@@ -122,10 +122,17 @@ emailServiceProvider.Add(new MessageHandler(graphClient, Log.Logger.ForContext<M
 // Create the server
 SmtpServer.SmtpServer smtpServer = new(options, emailServiceProvider);
 
+// Create and start health check endpoint
+HealthCheckEndpoint healthEndpoint = new(config.HealthCheckPort, Log.Logger.ForContext<HealthCheckEndpoint>());
+
 // Log server start
 Log.Information("Smtp server started on {SmtpHost}:{SmtpPort}", config.Smtp.Host, config.Smtp.Port);
 
-// Start the server
+// Start health check endpoint in background
+CancellationTokenSource cts = new();
+_ = Task.Run(() => healthEndpoint.StartAsync(cts.Token), cts.Token);
+
+// Start the SMTP server
 await smtpServer.StartAsync(CancellationToken.None);
 
 

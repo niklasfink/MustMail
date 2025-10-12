@@ -6,6 +6,7 @@ public class Configuration
     public required MicrosoftGraphConfiguration Graph { get; init; }
     public required List<string> AllowedSenders { get; init; }
     public string LogLevel { get; init; } = "Information";
+    public int HealthCheckPort { get; init; } = 8080;
 }
 public class SmtpConfiguration
 {
