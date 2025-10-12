@@ -1,10 +1,13 @@
-name: Publish
+name: Build and Publish
 
 permissions:
   contents: write
   packages: write
   
 on:
+  push:
+    branches:
+      - main
   release:
     types: [published]
 
@@ -13,7 +16,77 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  auto-version-and-build:
+    # Only run on push to main (not on releases)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    name: Auto-bump version and build container
+    outputs:
+      new_version: ${{ steps.bump.outputs.newVersion }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get current version
+        id: get_version
+        run: |
+          CURRENT_VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" MustMail.csproj)
+          echo "current_version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Increment version
+        id: increment
+        run: |
+          CURRENT_VERSION="${{ steps.get_version.outputs.current_version }}"
+          NEW_VERSION=$((CURRENT_VERSION + 1))
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "New version will be: $NEW_VERSION"
+
+      - name: Bump build version
+        id: bump
+        uses: vers-one/dotnet-project-version-updater@v1.3
+        with:
+          file: "MustMail.csproj"
+          version: ${{ steps.increment.outputs.new_version }}
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add MustMail.csproj
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.newVersion }}"
+          git push
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ steps.bump.outputs.newVersion }}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
   version:
+    # Only run on release
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     name: Build and bump version
     steps:
@@ -43,6 +116,7 @@ jobs:
 
   release:
     needs: version
+    if: github.event_name == 'release'
     name: Release
     strategy:
       matrix:
@@ -98,13 +172,14 @@ jobs:
   
   build-and-push-image:
     needs: version
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       # Uses the `docker/login-action` action to log in to the Container registry registry using the account and password that will publish the packages. Once published, the packages are scoped to the account defined here.
       - name: Log in to the Container registry
-        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -112,14 +187,14 @@ jobs:
       # This step uses [docker/metadata-action](https://github.com/docker/metadata-action#about) to extract tags and labels that will be applied to the specified image. The `id` "meta" allows the output of this step to be referenced in a subsequent step. The `images` value provides the base name for the tags and labels.
       - name: Extract metadata (tags, labels) for Docker
         id: meta
-        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
       # This step uses the `docker/build-push-action` action to build the image, based on your repository's `Dockerfile`. If the build succeeds, it pushes the image to GitHub Packages.
       # It uses the `context` parameter to define the build's context as the set of files located in the specified path. For more information, see "[Usage](https://github.com/docker/build-push-action#usage)" in the README of the `docker/build-push-action` repository.
       # It uses the `tags` and `labels` parameters to tag and label the image with the output from the "meta" step.
       - name: Build and push Docker image
-        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        uses: docker/build-push-action@v5
         with:
           context: .
           push: true
