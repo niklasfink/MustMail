@@ -54,7 +54,7 @@ if (config == null || config.Graph == null || config.Smtp == null || config.Allo
 }
 
 // Log configuration
-Log.Information("Configuration: \n {Serialize}", JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
+Log.Information("Configuration: \n {Config:l}", JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true }));
 
 // Create SMTP Server options
 ISmtpServerOptions? options = new SmtpServerOptionsBuilder()
