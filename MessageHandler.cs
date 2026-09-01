@@ -3,7 +3,10 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Graph;
 using Microsoft.Graph.Models;
+using Microsoft.Graph.Models.ODataErrors;
 using Microsoft.Graph.Users.Item.SendMail;
+using Microsoft.Kiota.Abstractions;
+using Microsoft.Kiota.Abstractions.Serialization;
 using MimeKit;
 using Serilog;
 using SmtpServer;
@@ -217,9 +220,18 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
 
         try
         {
+            RequestInformation requestInfo = graphClient.Users[senderAddress].SendMail.ToPostRequestInformation(requestBody);
+            byte[] mimeContent = Encoding.ASCII.GetBytes(Convert.ToBase64String(buffer.ToArray()));
+            using MemoryStream mimeStream = new(mimeContent);
+            requestInfo.SetStreamContent(mimeStream, "text/plain");
 
-            // Send email using the validated sender address
-            await graphClient.Users[senderAddress].SendMail.PostAsync(requestBody, cancellationToken: cancellationToken);
+            Dictionary<string, ParsableFactory<IParsable>> errorMapping = new()
+            {
+                { "4XX", ODataError.CreateFromDiscriminatorValue },
+                { "5XX", ODataError.CreateFromDiscriminatorValue }
+            };
+
+            await graphClient.RequestAdapter.SendNoContentAsync(requestInfo, errorMapping, cancellationToken);
 
             // Record success
             HealthCheckService.Instance.RecordSuccess();
