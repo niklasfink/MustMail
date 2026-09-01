@@ -110,14 +110,7 @@ foreach (string senderAddress in config.AllowedSenders)
             Environment.Exit(1);
         }
 
-        if (user.MailboxSettings == null)
-        {
-            Log.Warning("Mailbox settings for user '{From}' not found. Sending mail might not be available.", senderAddress);
-        }
-        else
-        {
-            Log.Information("Successfully validated sender address: '{From}'", senderAddress);
-        }
+        Log.Information("Successfully validated sender address: '{From}'", senderAddress);
     }
     catch (Microsoft.Graph.Models.ODataErrors.ODataError error)
     {

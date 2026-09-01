@@ -103,6 +103,7 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
         // Extract and process attachments
         List<Microsoft.Graph.Models.Attachment> attachments = new();
         List<string> attachmentNames = new();
+        long attachmentBytesTotal = 0;
 
         foreach (var attachment in message.Attachments)
         {
@@ -112,6 +113,7 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
                 using var memoryStream = new MemoryStream();
                 mimePart.Content.DecodeTo(memoryStream);
                 byte[] attachmentBytes = memoryStream.ToArray();
+                attachmentBytesTotal += attachmentBytes.Length;
 
                 string fileName = mimePart.FileName ?? "unnamed-attachment";
                 attachmentNames.Add(fileName);
@@ -138,6 +140,7 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
                     using var memoryStream = new MemoryStream();
                     messagePart.Message.WriteTo(memoryStream);
                     byte[] messageBytes = memoryStream.ToArray();
+                    attachmentBytesTotal += messageBytes.Length;
 
                     attachments.Add(new FileAttachment
                     {
@@ -204,6 +207,7 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
             Cc = ccList,
             AttachmentCount = attachmentNames.Count,
             Attachments = attachmentNames.Any() ? string.Join(", ", attachmentNames) : null,
+            AttachmentBytes = attachmentBytesTotal,
             HasHtmlBody = message.HtmlBody != null,
             HasTextBody = message.TextBody != null
         };
@@ -226,15 +230,17 @@ public class MessageHandler(GraphServiceClient graphClient, ILogger logger, List
         }
         catch (Microsoft.Graph.Models.ODataErrors.ODataError odataEx)
         {
-            string errorMsg = $"Microsoft Graph error: {odataEx.Error?.Message ?? odataEx.Message}";
-            logger.Error("Email send failed: {ErrorMessage}", errorMsg);
+            string graphCode = odataEx.Error?.Code ?? "unknown";
+            string graphMessage = odataEx.Error?.Message ?? odataEx.Message;
+            string errorMsg = $"Microsoft Graph error ({odataEx.ResponseStatusCode}, {graphCode}): {graphMessage}";
+            logger.Error(odataEx, "Email send failed: {ErrorMessage}", errorMsg);
             HealthCheckService.Instance.RecordFailure(errorMsg);
-            return SmtpResponse.MailboxUnavailable;
+            return SmtpResponse.TransactionFailed;
         }
         catch (Exception ex)
         {
             string errorMsg = $"{ex.GetType().Name}: {ex.Message}";
-            logger.Error("Email send failed: {ErrorMessage}", errorMsg);
+            logger.Error(ex, "Email send failed: {ErrorMessage}", errorMsg);
             HealthCheckService.Instance.RecordFailure(errorMsg);
             return SmtpResponse.TransactionFailed;
         }
